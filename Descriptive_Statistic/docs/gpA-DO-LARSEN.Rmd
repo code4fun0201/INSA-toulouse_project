@@ -1,0 +1,498 @@
+---
+title: "Projet En Statistique Descriptive Semestre 1"
+author: "Quoc Bao DO & Vetle Ramberg LARSEN"
+date: "2024-05-01"
+output:
+  html_document:
+    toc: true
+    df_print: paged
+  mainfont: Times New Roman
+  fontsize: 12
+  pdf_document:
+    toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,message = FALSE,fig.height = 4)
+```
+# Introduction
+
+Ce projet statistique vise à évaluer l'implication de divers pays du monde dans la lutte contre le réchauffement climatique, en se focalisant sur l'utilisation des énergies renouvelables dans la production d'électricité. 
+À travers l'analyse d'un jeu de données exhaustif, et une approche méthodologique, notre objective est d'identifier des comportements similaires entre pays.
+
+Nous téléchargons tout d'abord les bibliothèques qui nous seront utiles dans notre analyse.
+
+```{r,results="hide",message=FALSE, warning=FALSE,error=FALSE}
+library(corrplot)
+library(shape)
+library(rgl)
+library(mclust)
+library(cluster)
+library(factoextra)
+library(ppclust)
+library(FactoMineR)
+library(gridExtra)
+library(circlize)
+library(viridis)
+library(reshape2)
+library(klaR)
+library(dbscan)
+library(seriation)
+library(vcd)
+library(dplyr)
+library(clusterSim)
+library(rcompanion)
+```
+
+
+# 1 Prise de connaissance du jeu de données
+```{r}
+renew <- read.table("renew.txt",header = TRUE)
+str(renew)
+```
+On travaille avec le jeu de données "renew.txt" constitué de variables :
+
+* Entity (Qualitative) : le nom du pays en question
+* Year (Quantitative) : l'année en question
+* Access.elec (Quantitative) : le pourcentage de la population qui a accès à l'électricite
+* Rnw.energy.share (Quantitative) : le pourcentage d'énergies rénouvelables dans la consommation totale d'énergie
+* Elec.fossil (Quantitative) : la quantité d'électricité produite à l'aide d'énergie fossile en TerraWatt-heures
+* Elec.rnw (Quantitative) : la quantité d'électricité produite à l'aide d'énergies renouvelables en TerraWatt-heures
+* Prim.energy.consumpt (Quantitative) : la consommation totale d'énergie par personne en KiloWatt-heures
+* co2 (Quantitative) : les émissions totales de CO2 en milliers de Tonnes
+* GDP.capita (Qunatitative) : le PIB par habitant en $ US
+* Continent (Qualitative) : le continent dont se situe le pays en question
+
+En gros, le jeu de données contient donc 10 variables, dont 2 variables qualitatives nominales (Entity et Continent), 1 variable quantitative discrète (Year) et les 7 autres sont quantitatives continues(Access.elec, Rnw.energy.share, etc.). On va transformer celles-ci qui sont qualitatives en facteur, donc des categories distinctes, afin de grouper les données. 
+
+```{r}
+renew$Entity <- factor(renew$Entity)
+renew$Continent <- factor(renew$Continent)
+str(renew)
+```
+
+
+# 2 Statistique descriptive unidimensionnelle et bidimensionnelle
+## 2.1 Etude unidimensionnelle
+### 2.1.1 Etude unidimensionnelle des variables qualitatives
+
+```{r,fig.height=4}
+occurences=as.data.frame(table(renew$Entity))$Freq
+col.occ=rep("grey",length(occurences))
+col.occ[occurences<10]<-"red"
+col.occ[occurences>=20]<-"green"
+
+par(mfrow=c(1,2))
+barplot(table(renew$Entity),col=col.occ,horiz=TRUE,cex.names=0.6,las=2,
+        cex.main = 1,main="Inegalites dans\n le nombre de mesures")
+
+occurences=as.data.frame(table(renew$Continent))$Freq
+col.occ=rep("grey",length(occurences))
+col.occ[occurences<50]<-"red"
+col.occ[occurences>=150]<-"green"
+barplot(table(renew$Continent),col=col.occ,horiz=TRUE,las=2,
+        cex.main=1,main="Peu de donnees en Europe,\n trop en Asie")
+```
+La fonction table nous permet d'accéder au nombre d'occurences des différents pays et continents.
+
+#### 2.1.1.1 Anomalie 1 - Des années manquantes
+
+Nous constatons toute suite la première anomalie dans notre jeu de données: il manque de l'information pour certain pays. 
+Le Turkmenistan et l'Uzbekistan, par exemple, sont sujet à une réelle pénurie de données, avec respectivement 8 et 9 années de mesures, tandis que d'autres pays présentent 20 années de mesures.
+
+
+#### 2.1.1.2 Anomalie 2 - Une répartition inégale sur les continents
+
+De plus, nous constatons que notre jeu de données est très biaisé envers les pays asiatiques. En effet, cela s'explique par le choix du créateur du jeu de données d'inclure un nombre inégal de pays sur chaque continent. Comme montre le code d'en-dessous.
+
+```{r}
+paste("Repartition inegale des pays sur les continents")
+for(cont in unique(renew$Continent)){
+  print(paste(c(toupper(cont),paste(unique(renew[renew$Continent==cont,"Entity"]))),
+              collapse=" "))
+}
+```
+
+### 2.1.2 Etude unidimensionnelle des variables quantitatives
+
+Dans cette partie, nous allons étudier, d'une manière séparée, des variables quantitatives.
+Pour faciliter leurs manipulations, on va se créer un dataframe, qu'on nomme `tab_num`.
+
+```{r}
+tab_num = renew[,-c(1,10)]
+head(tab_num)
+```
+Nous examinons ces variables par la commande `summary` qui nous donne des indicateurs statistiques tels que le min, le max, la moyenne, le 0.25-quantile, le 0.75 quantile et le median.
+```{r}
+summary(tab_num)
+```
+Pour chaque variable parmi Elec.fossil, Elec.rnw et co2, nous observons qu'il y a une décalage considérable entre la moyenne et le median, une tel décalage s'explique par le fait que ces variables possèdent de nombreux d'outliers. Graphiquement, la commande `boxplot` peut nous donner une meilleur compréhension sur ces variables.
+```{r}
+par(mfrow=c(2,4))
+for (i in 1:ncol(tab_num)){
+  boxplot(tab_num[i],main = colnames(tab_num)[i])
+}
+```
+La sortie graphique nous permet de savoir que:
+
+* La moyenne et la variance varient radicalement selons chaque variable, cette observation peut etre utile dans le choix de type de l'ACP
+* Il y a beaucoup d'outliers dans les variables Elec.foosil, Elec.rew et CO2
+
+
+#### 2.1.2.1 Anomalie 3 - les outliers
+
+Cependant, le fait d'avoir des outliers n'est pas une mauvaise signe en soi. Parmi les pays qui sont représentés dans "renew.txt", il y a de fortes disparités en démographie, en situation économique et dans leur investissement en énergies rénouvelables. 
+La commande `boxplot` a une valeur out qui permet d'accéder aux outliers qui sont représentés dans le boxplot. 
+Nous allons utiliser cette commande, mais pas que. En utilisant aussi la commande `which` pour avoir les lignes qui vérifient une certaine proposition (ici: valeur d'une variable >= outlier), la variable Entity et la commande `unique`, on peut identifier les pays liés aux outliers. 
+```{r, warning=FALSE}
+outElFos<-boxplot(renew$Elec.fossil,plot=F)$out
+outElRnw<-boxplot(renew$Elec.rnw,plot=F)$out
+outCO2<-boxplot(renew$co2,plot=F)$out
+paste("Hall of Fame")
+paste(c("Energie fossile:",paste(unique(renew[renew$Elec.fossil>=outElFos,"Entity"]))),collapse=" ")
+paste(c("Energie renouvelable:",paste(unique(renew[renew$Elec.rnw>=outElRnw,"Entity"]))),collapse=" ")
+paste(c("Emetteurs de co2:",paste(unique(renew[renew$co2>=outCO2,"Entity"]))),collapse=" ")
+```
+Dans la partie 1 "Prise de connaissances du jeu de données" de notre rapport, nous avons constaté que les variables Elec.fossil, Elec.rnw, et co2 ont été mésurées en Terrawatt-heure et milliers de tonnes. Elles n'ont donc pas été normalisées par rapport au nombre d'habitants. Ce qui explique pourqoui la Chine et l'Inde sont responsables d'autant d'outliers. Ensuite, Brésil est un pays très pluvial, avec de nombreux centrales hydroélectriques, et avec une population assez important par rapport aux autres pays dans Entity. C'est donc logique que Brésil se différencie des autres pays en termes de production d'énergie rénouvelable. 
+
+Nous avons décidé de garder nos outliers, parce que nous pouvons expliquer d'où ils viennent.
+Avec le recul, nous pourrons se poser la question si les variables Elec.fossil, Elec.rnw, et co2 auront pu être mesurées différemment. Cependant, ce qui nous intéresse, c'est la quantité de co2 dans l'atmosphère. Il n'y a pas donc qu'une vraie réponse.
+
+## 2.2 Etude bidimensionnelle
+### 2.2.1 Etude bidimensionnelle entre les variables qualitatives
+Cherchons à présent un lien, si existe, entre les deux variables qualitatives Entity et Continent. Pour ce faire, nous établissons la table de contingence de ces 2 variables en utilisant la fonction `table`.
+```{r}
+table.cont <-table(renew$Continent,renew$Entity);table.cont
+```
+
+Nous remarquons que les profils lignes/colonnes sont bien différents, ce qui implique que les variables Entity et Continents sont dépendantes. Pour verifier cette observation, nous introduisons le coefficient d'association de Pearson qu'on a vu en cours, grâce à la commande `CramerV`. Ce coefficient est inclu entre 0 (indique aucune associaiton entre les deux variables) et 1 (indique une forte association entres les deux variables).
+```{r}
+cramerV(table.cont)
+```
+Dans ce cas, l'indice de liaison de Pearson vaut 1, ce qui confirme notre observation.
+
+### 2.2.2 Etude bidimensionnelle entre les variables quantitatives
+Cette partie se consacre à étudier les corrélations entres les variables quantitatives. Tout d'abord, nous calculons la matrice de covariance et la matrice de corrélation pour avoir un apérçu géneral des dépendances.
+```{r}
+cov_matrice = cov(tab_num);
+cor_matrice = cor(tab_num); cor_matrice
+```
+Bien que nous ne retenons pas trop d'information de la matrice de covariance, la matrice de corrélation nous est fort utile. Elle nous permet de savoir lesquels parmi les couples sont liées.
+Nous considérons que les couples qui présentent une corrélation >=0.6 (en valeur absolue), sont corrélées.
+Ce sont :
+
+* La production d'energie fossile (Elec.fossil) et la production d'energie renovelable (Elec.rnw)
+* Le pourcentage en energie rénouvelable (Rnw.energy.share) et la consommation totale d'énergie (Prim.energy.consumpt)
+* La production d'energie fossile et les émissions en CO2 (co2)
+* La production d'energie renouvelable et les émissions en CO2
+* La consommation totale d'energie et le PIB (GDP.capita)
+
+Pour ce dernier couple, nous avons décidé de le garder, parce que son indice de corrélation est proche de 0.6.
+Parmi ces couples, celui qui est le plus corrélé est celui de co2 et Elec.fossil. Cela nous indique que ces deux variables transmettent la même information. En effet leur indice de corrélation est très proche de 1. 
+
+Bien que chaque enlevement de variable constitue une perte d'information, nous considérons que cette perte est minuscule et que le gain en visibilité et en compréhension sera important. Nous enlevons donc la variable co2 de notre jeu de données pour la suite.
+```{r}
+renew.comp<-renew[,-8]     #le co2 est la 8ème variable
+tab.num.comp<-tab_num[,-7] #dans le table elle est en position 7
+```
+
+
+Le graphique géneré par la commande `corrplot` suivante, qui represente la matrice de corrélation, offre une meilleur compréhension.
+```{r,fig.width=4,fig.height=4}
+corrplot(cor_matrice,method="ellipse",type="upper")
+```
+
+Pour mieux comprendre la relation de chaque couple, nous allons les tracer. Pour la visualisation des corrélations nous gardons pour le moment la variable co2.
+```{r,fig.width=12,fig.height=4}
+par(mfrow=c(1,5))
+for (i in 2:ncol(tab_num)){
+  for (j in 2:i){
+    if (i != j & abs(cor_matrice[i,j]) >= 0.598){
+      plot(tab_num[,j],tab_num[,i],main=paste(colnames(tab_num)[j]," vs ",
+            colnames(tab_num)[i]),cex.main=1,xlab =colnames(tab_num)[j],
+           ylab=colnames(tab_num)[i] )
+      abline(lm(tab_num[,i]~tab_num[,j]),col="red")
+    }
+  }
+}
+```
+Pour les variables Elec.fossil, Elec.rnw, et co2, ces graphes confirment obeservations. Cependant, la corrélation entre le pourcentage d'energie renouvelable et la consommation totale en energie, n'est pas très convaincant.
+
+
+### 2.2.3 Etude bidimensionnelle entre les variables qualitatives et les variables quantitatives
+
+Maintenant, l'objectif est de savoir si les indicateurs quantitatifs sont liés  à des pays ou à des continents en particulier. 
+Cette partie est consacrée à l'étude de la relation entre les variables qualitatives et les variables quantitatives. Demarrons par calculer le rapport de corrélation vu en cours. Cette notion est définie par le rapport entre la variance inter-classes et la variance totale. Si le rapport est proche de 0, les deux variables sont peu liées; Si le rapport est proche de 1, les variables sont fortement liées. Nous allons définir tout d'abord une fonction `vartot` et une fonction `varinter` qui permettent de calculer respectivement la variance totale et la variance inter-classes d'une variable.
+```{r}
+vartot <- function(x){
+  res = sum((x-mean(x))^2)
+  return(res/length(x))
+}
+
+varinter <- function(x,class){
+  moyennes = tapply(x,class,mean)
+  effectifs = tapply(x,class,length)
+  res = sum(effectifs*(moyennes-mean(x))^2)
+  return(res/length(x))
+}
+```
+Enfin, nous calculons le rapport de corrélation en utilisant les deux fonctions précédentes.
+```{r}
+rapport.cor <- function(x,class){
+  res = varinter(x,class)/vartot(x)
+  return(res)
+}
+```
+Maintenant, nous allons chercher les rapports de corrélation entres les deux variables qualitatives Entity, Continent et les variables quantitatives.
+```{r}
+rapCorEn = NULL
+rapCorCon = NULL
+for (i in 2:7){
+  rapCorEn  = c(rapCorEn,rapport.cor(tab.num.comp[,i],renew.comp$Entity))
+  rapCorCon = c(rapCorCon,rapport.cor(tab.num.comp[,i],renew.comp$Continent))
+}
+df.rapport = data.frame(VarQuantitative=colnames(tab.num.comp)[2:7],
+                        Entity = rapCorEn,
+                        Continent = rapCorCon);
+df.rapport
+```
+Nous constatons que les variables quantitatives sont très liées au pays en question (Entity), mais peu liées au continent (Continent) sur lequel se situe ce pays.
+Prenons par exemple la variable Prim.energy.consumpt. Cette variable est fortement liée au facteur Entity, mais peu liée au facteur Continent. Comment cela est-il possible?
+
+On a le plus d'individus sur le continent d'Asie. Etudions cette variable sur ce continent.
+```{r,fig.width=11,fig.height=4}
+YEARS<-unique(paste(renew.comp$Year))
+CONTS<-unique(paste(renew.comp$Continent))
+cols=c("purple","violet","turquoise","brown")
+
+par(mfrow=c(1,2))
+boxplot(renew.comp[which(renew.comp$Continent=="Asia"),"Prim.energy.consumpt"],
+        main="Differences en consommation d'energie en Asie")
+
+plot(0,xlim=c(min(renew.comp$Year),max(renew.comp$Year)),ylim=c(0,40000),
+     ylab="Elec.rnw",main="Consommation moyenne d'energie dans le monde",xlab="Years")
+legend("topright",legend=CONTS,fill=cols)
+for(year in YEARS){
+  for(k in 1:4){
+    y<-mean(renew.comp[which(renew.comp$Continent==CONTS[k]&renew.comp$Year==year),
+                       "Prim.energy.consumpt"])
+    x<-year
+    if(!(is.na(y))){
+      points(x,y,col=cols[k])
+    }
+  }
+}
+```
+En etudiant la boite à moustaches, nous apercevons que la consommation totale d'energie varie beaucoup en Asie, mais est moyennement basse. De plus, le plot à droite nous montre qu'en moyenne, la consommation totale d'energie différe relativement peu sur les differents continents. Il y a donc une sorte de compensation entre les pays très consommateurs et peu consommateurs sur un même continent. Voilà pourquoi cette variable ne dépendent pas du facteur Continent.
+
+
+# 3 Analyse en composantes principales 
+Maintenant, pous allons procéder une ACP (Analys des Composantes Principales). Cette étape va nous permet de:
+
+1. Résumer l'information
+2. Indentifier les corrélation entre variables
+3. Identifier les proximités entres les individus
+
+Après avoir examiné les variables quantitatives, nous avons aperçu que les moyennes et les variances varient largement selon chaque variable. Ainsi, nous sommes convaincus que l'ACP centrée réduite est la meilleure choix. Elle permet nottamment de réduire l'importance des variables ayant une moyenne elévée ou une forte variabilité.
+
+## 3.1 Recherche des composantes principales
+Dans cette optique, nous allons effecter l'ACP centrée-réduite à l'aide de la fonction `PCA` de la bibliothèque FactoMineR.
+```{r}
+res.acp.cenRe = PCA(renew.comp,scale.unit=TRUE,ncp=7,quali.sup=c(1,9),graph=FALSE)
+```
+
+Pour mesurer la dispersion du nuage des individus,nous introduisons la notion de l'inertie globale par rapport à l'individu de référence qui est le centroid du nugae des individus dont coordonnées sont calculées par la norme eucludienne. 
+D'une manière analogue, l'inertie partielle portée par un axe nous indique la dispersion des données sur cet axe, plus l'inertie partielle portée par un axe est grande, plus information apportée par cet axe est importante. 
+Nous voulons afficher les inerties partielle des axes principaux, ces valeurs correspondent aux valeurs propres de la matrice de corrélation, nous voulons aussi afficher l'inertie global. La fonction `PCA` nous permet de faire tout cela. Consultons le résultat du code d'en-dessous.
+```{r}
+res.acp.cenRe$eig[,"eigenvalue"]
+InerTotal.cenRe = sum(res.acp.cenRe$eig[,"eigenvalue"]);
+print(paste("l'Inertie total vaut ",InerTotal.cenRe))
+```
+Nous remarquons que l'inertie global est égale aux nombres des variables quantitatives, ce qui est cohérent au cours. Nous n'allons pas étudier et examiner tous les axes principaux parce que ce travail est long et n'apporte pas beaucoup d'information. En effet, certains axes contiennent peu d'informations. Nous ne conserve que les axes portant un part significatif de l'inertie totale. Pour ce faire, nous allons afficher les pourcentages cumulé d'inertie:
+
+```{r,fig.height=3}
+barplot(res.acp.cenRe$eig[,"cumulative percentage of variance"],cex.main=0.7,
+        col="#1b98e0",main="Pourcentage cumule d'inertie total", cex.names = 0.7)
+abline(h = 80,col="red")
+```
+Nous gardons donc les 3 premiers axes principaux. Ils contiennent plus que 80% de l'inertie globale, et donc plus que 80% de l'information.
+Les axes principaux sont des combinaisons linaires de nos variables quantitatives. Afin d'interpreter ces axes, nous allons procéder à une analyse.
+
+## 3.2 Interpretation des axes principaux
+
+Commencons par visualiser les corrélations entre les variables et les axes principaux. Nous utilisons la methode `corrplot`.
+```{r,fig.height=3}
+corrplot(res.acp.cenRe$var$coord[,1:3],method="circle")
+```
+
+### 3.2.1 Analyse du premier axe principal
+
+Nous constatons d'abord une forte liaison entre le premier axe et les variables Access.elec, Prim.energy.consumpt, et GPD.capita. L'accès à l'électricité, la consommation totale d'énergie, et le PIB d'un pays sont des indicateurs **du niveau de développement**. 
+Ensuite, nous constatons que cet axe est negativement corrélé avec la variable Rnw.energy.share. Cela est cohérent. Les pays de notre jeu de données sont presque tous des producteurs ou des importateurs de charbon, de gaz, ou de pétrole. Une amélioration de leur niveau de développement va entrainer une augmentation de leur consommation en energie fossile. Le pourcentage de consommation d'energie renouvelable va donc diminuer. 
+
+### 3.2.2 Analyse du deuxième axe principal
+
+Nous constatons une forte liaison entre le deuxième axe et les variables Elec.fossil et Elec.rnw. Ces deux variables donnent une information sur **la production totale d'energie**. Nous pensons donc que cet axe transmet cette information. 
+Nous savons d'après le cours que les axes principaux sont indépendants/orthogonaux. On est donc en train de dire que la production d'energie totale est indépendante du niveau de développement. Ceci semble faux. Cependant, nous rappelons que la production totale d'energie d'un pays depend fortement de ses ressources naturelles. En effet, un pays peu développé mais situé dans une zone où les ressources naturelles sont abondantes, peut produire plus d'energie qu'un pays légerement plus développé, mais se situant dans une zone aride.
+
+Nous revenons sur cette interpretation dans la partie prochaine "Graphe des individus".
+
+### 3.2.3. Analyse du troisème axe principal
+
+Nous constatons une forte liaison entre le troisième axe et la variable **Year**. On considère que cet axe transmet simplement une information sur **le temps**.
+
+Nous pouvons voir les axes comme une nouvelle repère de l'espace des individus. Les méta données obtenues en projettant les données brutes sur cette nouvelle repère donne une meilleure représentation de l'inertie et de la dispersion. Nous pouvons voir quelques premères lignes de ces meta données:
+```{r}
+head(res.acp.cenRe$ind$coord)
+```
+
+## 3.3 Graphes des individus
+
+Tracons les graphes des individus de nos trois dimensions dans cette nouvelle repère. Nous allons colorier en fonction de la variable Continent et de la variable Year. Nous utilisons la commande `fviz_pca_ind` pour créer les plots, et la commande `ggarrange` pour les afficher côte à côte.
+```{r,fig.height=12,fig.width=10}
+# Graphe des individus dans le plan factoriel engendré par l'axe 1 et 2
+p1<-fviz_pca_ind(res.acp.cenRe,geom.ind="point",col.ind=renew$Year)
+p2<-fviz_pca_ind(res.acp.cenRe,geom.ind="point",col.ind=renew$Year,axes=c(2,3))
+p3<-fviz_pca_ind(res.acp.cenRe,geom.ind="point",col.ind=renew$Continent)
+p4<-fviz_pca_ind(res.acp.cenRe,geom.ind="point",col.ind=renew$Continent,axes=c(2,3))
+ggpubr::ggarrange(p1,p2,p3,p4)
+```
+Dans le graphique des individus sur les axes principaux 1 et 2, colorés selon la variable Year, nous voyons une migration des individus vers le bas droite. Donc une augmentation en axe 1 et une diminution en axe 2. 
+Le premier constat semble cohérent. Tous les pays sont dans un développement plus ou moins important. Cependant le second ne va pas avec notre hypothèse. En effet, il semble que la quasi-totalité des pays produisent de moins en moins d'energie d'année à année. Ceci est faux, parce qu'on peut prouver que la production totale augmente:
+```{r,fig.width=6,fig.height=3}
+YEARS<-unique(paste(renew.comp$Year))
+
+plot(0,xlim=c(min(renew.comp$Year),max(renew.comp$Year)),ylim=c(0,800),xlab="Year",
+     ylab="Energie totale",main="Production totale d'energie en moyenne par annee")
+for(year in YEARS){
+  a<-mean(renew.comp[which(renew.comp$Year==year),"Elec.fossil"])
+  b<-mean(renew.comp[which(renew.comp$Year==year),"Elec.rnw"])
+  y<-a+b
+  x<-year
+  if(!(is.na(y))){
+    points(x,y)
+  }
+}
+```
+
+Nous revenons donc sur notre hypothèse. Il semble qu'il faudrait prendre en compte les autres variables moins liés à cet axe, aussi. Comme les variables Access.energy, Prim.energy.consumpt, et GDP.capita. 
+Il semble donc que l'information transmise par cet axe correspond à **la production d'energie totale en fonction de la consommation**, et pas que la production totale elle-même.
+
+Quand on regarde ce même graphe des individus coloré selon la variable Continent, nous voyons que les continents ont un comportement plus ou moins équivalent. Cependant, l'Asie est plus dispersé sur le graphe et présente un petit groupe d'individus avec un comportement différent. Nous nous imaginons que ce groupe d'individus corresponde en réalité à la Chine. Nous pourrons vérifier notre hypothèse en raffichant ce graphe, mais coloré selon la condition: renew.comp$Entity=="China".
+```{r,fig.height=3,fig.width=6}
+fviz_pca_ind(res.acp.cenRe,geom.ind="point",col.ind=renew.comp$Entity=="China")
+```
+
+Le deuxième graphe des individus nous montre de nouveau la forte relation entre la variable Year et l'axe 3. A part de cela, il n'y a pas beaucoup à commenter sur ce graphe.
+
+
+## 3.4 Graphes des variables
+Maintenant, nous voulons étudier la contribution de chaque variable aux axes principaux. Dans le cas centré reduit, étudier la contribution est équivalent à étudier la corrélation entre les variables.
+
+Graphiquement, nous visualisons le cercle des corrélations dans deux plans factoriels différent, celui engendré par l'axe 1 et l'axe 2 et celui engendré par l'axe 1 et l'axe 3.
+```{r,fig.width=10,fig.height=3.5}
+g1 <- fviz_pca_var(res.acp.cenRe,col.var="cos2",repel=T,
+                   gradient.cols=c("#00AFBB","#E7B800","#FC4E07"),axes = c(1,2))
+g2 <- fviz_pca_var(res.acp.cenRe,col.var="cos2",repel=T,
+                   gradient.cols=c("#00AFBB","#E7B800","#FC4E07"),axes = c(1,3))
+ggpubr::ggarrange(g1,g2)
+```
+A partir de ces cercle, nous remarquons que:
+
+* Les variables Prim.energy.consumpt, GDP.capita, Acess.elec, et Year sont corrélées positivement entre elles et négativement à Rnw.energy.share
+* Les variables Elec.fossil et Elec.rnw sont corrélées positivement. En même temps elles sont presque orthogonales aux autres variables. Cela signifie qu'elles leur sont quasiment indépendantes.
+* La variable Rnw.energy.share contribue négativement à l'axe 1, tandis que le reste contribuent de manière positive.
+* Les variables Prim.energy.consumpt, GDP.capita, Access.elec, et Year contribuent négativement à l'axe 2, tandis que le reste contribuent de manière positive. 
+* La variable Rnw.energy.share est la seule à contribuer négativement à l'axe 3.
+
+Ces résultats ont été commentés dans la partie précédente 3.2 "Analyse des axes principaux". Nous pensons qu'une deuxième analyse sera redondant, et nous n'y procédons donc pas.
+
+
+# 4 Clustering
+
+Vu que notre le jeu de donnée contient de nombreuse valeurs aberrantes et son structure a tendance à admettre des classes des formes non-sphèriques, la classification effectuée par la méthode de Kmeans ne s'avére pas efficace et pertinente. Dans cette optique que nous recourons à la méthode CAH (Classification Ascendante Hérarchique) avec le lien moyen comme la mesure d'agrégation qui est plus robuste aux données aberrantes (cf cours) et qui peut mieux gérer les classes de formes irrégulières et de tailles différentes.
+
+## 4.1 Introduction à la Classification Ascandante Hiérarchique (CAH)
+
+Pour rappel, la classification Ascendante Hiérarchique (CAH) est une méthode de classification itérative dont le principe consiste à :
+
+1. On commence par calculer la dissimilarité entre les N individus.
+2. Puis on regroupe les deux classes dont le regroupement minimise un critère d'agrégation donné, c'est le lien moyen dans notre cas, créant ainsi une nouvelle classe comprenant ces deux classes.
+3. On calcule ensuite la dissimilarité entre cette classe et les N-2 autres objets en utilisant le critère d'agrégation. Puis on regroupe les deux classes dont le regroupement minimise le critère d'agrégation.
+
+On continue ainsi jusqu'à ce que tous les individus soient regroupés.
+
+Nous démarrons par calculer les distances entres les individus grâce à la commande dist, dans ce cas, la matrice de distances sont calculée d'après **la norme euclidienne**.
+```{r}
+d = dist(scale(tab.num.comp,center = TRUE,scale = TRUE),method="euclidean")
+```
+
+Nous faisons la classification hiérachique des données avec les mesure d'agrégation **average** à l'aide de la fonction `hclust`.
+```{r}
+hclustaverage <- hclust(d,method="average")
+```
+
+Le graphique suivant représente le dendrogramme associé qui nous permet de visualiser le regroupement progressif des données.
+```{r,fig.height=3,warning=FALSE}
+fviz_dend(hclustaverage,show_labels=F)
+```
+Nous pouvons regarder ce graph de manière suivante: 
+L'axe horizontal représente les individus. L'échelle verticale sur le dendrogramme représente la distance/la dissimilarité. On commence par la bas, à chaque itération, l'algorithle fait une fusion de deux classes, ce qui est représentée sur le diagramme par la division d'une ligne verticale en deux lignes verticales.
+
+## 4.2 Determiner la nombre de classes optimal avec l'indice de Calinski-Harabasz
+
+L'indice de Calinski-Harabasz est une mesure qui évalue la qualité des clusters en fonction à la fois de la dispersion au sein des clusters et de la dispersion entre les clusters. 
+
+Le but étant de maximiser ce rapport pour avoir des clusters mieux définis. Une valeur d'indice de Calinski-Harabasz plus élevée indique des clusters plus compacts et bien séparés. Pour choisir le nombre de classes optimal, nous allons tracer l'évolution de l'indice Calinski-Harabasz en fonction du nombre de classes.
+
+```{r,fig.height=2}
+CH.av <- NULL
+Kmax <- 15
+for (k in 2:Kmax){
+cluster = cutree(hclustaverage,k=k)
+CH.av <- c(CH.av,index.G1(scale(tab.num.comp,center = TRUE,scale = TRUE),cluster))
+}
+daux <- data.frame(NbClust=2:Kmax,CH=CH.av)
+ggplot(daux,aes(x=NbClust,y=CH))+geom_line()+geom_point()
+```
+
+Nous prenons un nombre de classes égal à 5, parce que nous apercevons un pic sur le graphe de l'indice Calinski-Harabarz pour cet antécédent. Nous ne choisissons pas de diviser notre jeu de données en 14 classes, où un autre pic est atteint, car avec seulement 343 individus, cela ne nous semble pas raisonnable.  Traçons la classification obtenues sur le dendrogramme et sur le premier factoriel de l'ACP.
+```{r,warning=FALSE,fig.height=3}
+k=5
+clustCH.av <- cutree(hclustaverage,k)
+fviz_dend(hclustaverage,show_labels=FALSE,k=k)
+```
+Le graphe sortie représente les 5 classes associées à notre classification, nous pouvons voir que les tailles des classes sont largement variées.
+
+Pour mieux comprendre ce que caractérisent les classes, nous allons les injecter sur le graphe des individus.
+```{r,fig.height=3.5}
+fviz_pca_ind(res.acp.cenRe,geom=c("point"),habillage=factor(clustCH.av),axes=c(1,2),addEllipses = TRUE)
+```
+Analysons le graphe obtenu:
+
+* La classe bleue, située dans le coin supérieur droit du graphique, représente les pays à la fois développés et grands producteurs d'énergie, principalement la Chine entre 2012 et 2019.
+* La classe verte, similaire à la précédente mais moins intense, englobe également la Chine entre 2007 et 2011.
+* La classe rouge, au centre du graphique, rassemble les pays au niveau de développement moyen.
+* La classe jeune est composée de pays à faible niveau de développement et donc de faible rapport production-consommation d'energie.
+* La classe rose réunit des pays produisant peu d'énergie mais affichant un bon niveau de développement, principalement le Turkmenistan. On pourrait verifier cela de la même manière qu'nous avons fait pour la Chine mais par manque de l'espace, nous n'allons pas le faire.
+
+Ces catégorisations offrent des insights plus dynamiques sur les profils énergétiques et de développement des différents pays.
+
+## 4.3 Comparaison avec les variables quantitatives
+
+Maintenant, nous aimerons savoir si la classification obtenue par la méthode CAH sont en lien avec les pays et les Continents en question. Pour ce faire, nous introduisons l'indicateur RI (Rank Index) qui montre la proportion de paires de points qui sont groupées de la même façon dans les deux partitions. Dans ce sens, on dit que les deux classifications sont similaire si leur RI est proche de 1 et au contraire, les deux classification sont totalement différentes si leur RI est proche de 2. Nous allons calculer l'indicateur RI par la fonction `adjustedRandIndex`.
+```{r}
+print(paste("Niveau d'association de la classification selon les pays: ",
+            adjustedRandIndex(clustCH.av,renew$Entity)))
+print(paste("Niveau d'association de la classification selon les continents: ",
+            adjustedRandIndex(clustCH.av,renew$Continent)))
+```
+Les niveaus d'association sont faibles, nous concluons qu'il n'y a pas d'un lien clair entre cette classification et les pays et les continents.
+
+# Conclusion
+
+Après avoir examiné le jeu de données **renew**, nous restons toujours un peu désorientés.
+D'abord, ce projet nous a été utile pour mieux comprendre le Rstudio. Nous avons notamment progressé dans le paramètrage des graphes. Nous pensons que nous aurions pu avoir des résultat plus fiable si le jeu de données était plus complet. Cependant, nous avons quand même identifié un lien entre le niveau de développement et la polllution engendrée par un pays. Nous pouvons aussi constater que la chine a un comportement très différent des autres pays. Elle produit plus d'électricité ainsi que de co2 que le niveau moyen mondial, mais nous ne pouvons pas dégager une conclusion plus détaillée parce que nous manque l'indicateur sur la population. 
+
+
